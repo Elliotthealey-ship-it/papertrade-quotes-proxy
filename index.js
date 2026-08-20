@@ -124,7 +124,18 @@ connectFinnhub();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: "/ws" });
 
+// Keepalive: some hosts/proxies close a WebSocket after a period of no
+// traffic. Finnhub only sends a message when a trade actually happens, so
+// quiet moments in the market could otherwise look "idle" and get the
+// connection dropped even though nothing is wrong. Pinging periodically
+// keeps traffic flowing and lets us clean up genuinely dead connections.
+function heartbeat() {
+  this.isAlive = true;
+}
+
 wss.on("connection", (ws) => {
+  ws.isAlive = true;
+  ws.on("pong", heartbeat);
   clients.add(ws);
   ws.send(
     JSON.stringify({
@@ -134,6 +145,16 @@ wss.on("connection", (ws) => {
   );
   ws.on("close", () => clients.delete(ws));
 });
+
+const keepaliveInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 25000);
+
+wss.on("close", () => clearInterval(keepaliveInterval));
 
 server.listen(PORT, () => {
   console.log(`Quotes proxy (REST + WebSocket relay) listening on port ${PORT}`);
