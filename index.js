@@ -85,6 +85,15 @@ function connectFinnhub() {
     console.error("Missing FINNHUB_KEY — cannot start the live trade feed.");
     return;
   }
+  // Guard against overlapping connections (e.g. a stray reconnect firing
+  // while a previous socket is still open) — Finnhub may only allow one
+  // active connection per API key, so two at once could explain each one
+  // getting closed out from under the other.
+  if (finnhubSocket && (finnhubSocket.readyState === WebSocket.OPEN || finnhubSocket.readyState === WebSocket.CONNECTING)) {
+    console.log("connectFinnhub called while a connection is already open/connecting — skipping.");
+    return;
+  }
+
   finnhubSocket = new WebSocket(`wss://ws.finnhub.io?token=${key}`);
 
   finnhubSocket.on("open", () => {
@@ -103,20 +112,26 @@ function connectFinnhub() {
           latest[t.s] = { price: t.p, t: t.t };
           broadcast({ type: "trade", symbol: t.s, price: t.p, t: t.t });
         });
+      } else {
+        // Surface anything else Finnhub sends us (errors, pings, notices)
+        // instead of silently discarding it — this is often where the
+        // real reason for a disconnect shows up.
+        console.log("Finnhub message (non-trade):", raw.toString().slice(0, 300));
       }
     } catch (err) {
-      // ignore malformed messages
+      console.log("Finnhub message (unparsed):", raw.toString().slice(0, 300));
     }
   });
 
-  finnhubSocket.on("close", () => {
-    console.log(`Finnhub connection closed — reconnecting in ${reconnectDelay}ms.`);
+  finnhubSocket.on("close", (code, reasonBuf) => {
+    const reason = reasonBuf ? reasonBuf.toString() : "";
+    console.log(`Finnhub connection closed — code ${code}${reason ? `, reason: ${reason}` : ""} — reconnecting in ${reconnectDelay}ms.`);
     setTimeout(connectFinnhub, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 30000);
   });
 
   finnhubSocket.on("error", (err) => {
-    console.error("Finnhub websocket error:", err.message);
+    console.error("Finnhub websocket error:", err && err.message ? err.message : err);
   });
 }
 connectFinnhub();
