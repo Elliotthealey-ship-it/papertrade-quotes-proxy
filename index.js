@@ -158,7 +158,10 @@ wss.on("connection", (ws) => {
       quotes: Object.entries(latest).map(([symbol, v]) => ({ symbol, price: v.price, t: v.t })),
     })
   );
-  ws.on("close", () => clients.delete(ws));
+  ws.on("close", (code, reasonBuf) => {
+    clients.delete(ws);
+    console.log(`Client disconnected — code ${code}${reasonBuf && reasonBuf.length ? `, reason: ${reasonBuf.toString()}` : ""}. ${clients.size} client(s) remaining.`);
+  });
 });
 
 const keepaliveInterval = setInterval(() => {
